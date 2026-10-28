@@ -3,6 +3,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -65,7 +67,8 @@ public class App2 {
                     }
                 }
             }
-            redirect(exchange, normalizeFilter(form.getOrDefault("filter", "all")));
+            redirect(exchange, normalizeFilter(form.getOrDefault("filter", "all")),
+                    form.getOrDefault("q", ""));
             return;
         }
 
@@ -88,7 +91,7 @@ public class App2 {
                     }
                 }
             }
-            redirect(exchange, requestFilter(exchange));
+            redirect(exchange, requestFilter(exchange), requestSearch(exchange));
             return;
         }
 
@@ -109,25 +112,27 @@ public class App2 {
                     }
                 }
             }
-            redirect(exchange, requestFilter(exchange));
+            redirect(exchange, requestFilter(exchange), requestSearch(exchange));
             return;
         }
 
         if (path.equals("/clear-completed") && method.equals("POST")) {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String filter = normalizeFilter(parseForm(body).getOrDefault("filter", "all"));
+            Map<String, String> form = parseForm(body);
+            String filter = normalizeFilter(form.getOrDefault("filter", "all"));
+            String search = form.getOrDefault("q", "");
             try {
                 clearCompletedTodos();
             } catch (IOException exception) {
                 sendPersistenceError(exchange, exception);
                 return;
             }
-            redirect(exchange, filter);
+            redirect(exchange, filter, search);
             return;
         }
 
         if (path.equals("/") && method.equals("GET")) {
-            sendHtml(exchange, renderTodos(requestFilter(exchange)));
+            sendHtml(exchange, renderTodos(requestFilter(exchange), requestSearch(exchange)));
         } else {
             send(exchange, 404, "text/plain; charset=UTF-8", "ページが見つかりません");
         }
@@ -228,12 +233,14 @@ public class App2 {
         send(exchange, 500, "text/plain; charset=UTF-8", "Todoを保存できませんでした。データ保存先を確認してください。");
     }
 
-    private static String renderTodos(String filter) {
+    private static String renderTodos(String filter, String search) {
         List<Todo> snapshot;
         synchronized (todos) {
             snapshot = new ArrayList<>(todos);
         }
 
+        String normalizedSearch = search.trim().toLowerCase(Locale.ROOT);
+        String encodedSearch = URLEncoder.encode(search, StandardCharsets.UTF_8);
         int remaining = 0;
         int completedCount = 0;
         List<Todo> visibleTodos = new ArrayList<>();
@@ -246,7 +253,10 @@ public class App2 {
             if (filter.equals("all")
                     || (filter.equals("active") && !todo.done)
                     || (filter.equals("completed") && todo.done)) {
-                visibleTodos.add(todo);
+                if (normalizedSearch.isEmpty()
+                        || todo.title.toLowerCase(Locale.ROOT).contains(normalizedSearch)) {
+                    visibleTodos.add(todo);
+                }
             }
         }
 
@@ -263,6 +273,7 @@ public class App2 {
                 + "button{padding:12px 19px;border:0;border-radius:12px;background:var(--blue);color:white;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 5px 12px rgba(71,125,165,.2);transition:background .2s,transform .2s}button:hover{background:var(--blue-dark);transform:translateY(-1px)}"
                 + ".clear-completed-form{display:flex;justify-content:flex-end;margin:8px 0 0}.clear-completed-button{padding:7px 12px;border:1px solid var(--line);background:transparent;color:#8a8290;font-size:12px;box-shadow:none}.clear-completed-button:hover{background:#f7eeee;color:#a55353}"
                 + ".list-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}.count{color:var(--pine);font-weight:700}ul{margin:0;padding:0;list-style:none}li{display:flex;align-items:center;gap:12px;padding:15px 2px;border-bottom:1px solid #edf2f6}li:last-child{border-bottom:0}"
+                + ".search-form{margin:0 0 12px}.search-form input{flex:1 1 220px}.clear-search{font-size:12px}"
                 + ".filters{display:flex;gap:8px;margin:14px 0 4px}.filter{padding:6px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:13px}.filter.selected{border-color:var(--blue);background:#edf5fa;color:var(--blue-dark);font-weight:700}"
                 + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.todo-info{min-width:0;flex:1}.title{display:block;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}.deadline{display:block;color:var(--muted);font-size:12px}.deadline.today{color:#ad792e;font-weight:700}.deadline.overdue{color:#c45f58;font-weight:700}"
                 + "a{color:var(--blue);font-size:13px;text-decoration:none}a:hover{text-decoration:underline}.delete{color:#8a8290}.empty{padding:30px 8px;text-align:center;color:var(--muted)}.empty-mark{display:block;margin-bottom:8px;color:var(--blue);font-size:28px}"
@@ -284,20 +295,32 @@ public class App2 {
                 + "<span class='flake' style='--left:79%;--size:13px;--speed:19s;--delay:-16s'>❄</span><span class='flake' style='--left:88%;--size:9px;--speed:14s;--delay:-9s'>❅</span>"
                 + "<span class='flake' style='--left:96%;--size:12px;--speed:16s;--delay:-4s'>❄</span></div><main class='wrap'><p class='eyebrow'>A quiet winter, a little progress</p>"
                 + "<h1>冬じたくの Todo</h1><p class='intro'>あたたかい飲みものと一緒に、今日やることをひとつずつ。</p><section class='card'>"
-                + "<form method='post' action='/add'><input type='hidden' name='filter' value='" + filter + "'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required>"
+                + "<form method='post' action='/add'><input type='hidden' name='filter' value='" + filter
+                + "'><input type='hidden' name='q' value='" + escapeHtml(search)
+                + "'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required>"
                 + "<label class='due-field'>期限<input type='date' name='dueDate' aria-label='期限'></label><button type='submit'>＋ 追加</button></form>"
+                + "<form class='search-form' method='get' action='/'><input type='hidden' name='filter' value='"
+                + filter + "'><input type='search' name='q' value='" + escapeHtml(search)
+                + "' placeholder='キーワードで検索…' aria-label='Todoを検索'>"
+                + "<button type='submit'>検索</button>"
+                + (search.isEmpty() ? "" : "<a class='clear-search' href='/?filter=" + filter
+                        + "'>クリア</a>") + "</form>"
                 + "<div class='list-head'><span>今日のリスト</span><span class='count'>あと " + remaining + " 件</span></div>"
                 + "<nav class='filters' aria-label='Todoの表示'><a class='filter"
-                + (filter.equals("active") ? " selected" : "") + "' href='/?filter=active'"
+                + (filter.equals("active") ? " selected" : "") + "' href='/?filter=active&amp;q="
+                + encodedSearch + "'"
                 + (filter.equals("active") ? " aria-current='page'" : "") + ">未完了だけ</a><a class='filter"
-                + (filter.equals("completed") ? " selected" : "") + "' href='/?filter=completed'"
+                + (filter.equals("completed") ? " selected" : "") + "' href='/?filter=completed&amp;q="
+                + encodedSearch + "'"
                 + (filter.equals("completed") ? " aria-current='page'" : "") + ">完了だけ</a><a class='filter"
-                + (filter.equals("all") ? " selected" : "") + "' href='/?filter=all'"
+                + (filter.equals("all") ? " selected" : "") + "' href='/?filter=all&amp;q="
+                + encodedSearch + "'"
                 + (filter.equals("all") ? " aria-current='page'" : "") + ">全部</a></nav>");
         if (completedCount > 0) {
             html.append("<form class='clear-completed-form' method='post' action='/clear-completed' "
                     + "onsubmit=\"return confirm('完了済みのTodoをすべて削除しますか？')\">")
                     .append("<input type='hidden' name='filter' value='").append(filter)
+                    .append("'><input type='hidden' name='q' value='").append(escapeHtml(search))
                     .append("'><button class='clear-completed-button' type='submit'>完了済みを一括削除</button></form>");
         }
         if (visibleTodos.isEmpty()) {
@@ -336,10 +359,11 @@ public class App2 {
                 html.append("</span>");
                 if (!todo.done) {
                     html.append("<a href='/done?id=").append(todo.id).append("&amp;filter=")
-                            .append(filter).append("'>完了</a>");
+                            .append(filter).append("&amp;q=").append(encodedSearch).append("'>完了</a>");
                 }
                 html.append("<a class='delete' href='/delete?id=").append(todo.id)
-                        .append("&amp;filter=").append(filter).append("'>削除</a></li>");
+                        .append("&amp;filter=").append(filter).append("&amp;q=")
+                        .append(encodedSearch).append("'>削除</a></li>");
             }
             html.append("</ul>");
         }
@@ -382,6 +406,11 @@ public class App2 {
         return normalizeFilter(query == null ? "all" : parseForm(query).getOrDefault("filter", "all"));
     }
 
+    private static String requestSearch(HttpExchange exchange) {
+        String query = exchange.getRequestURI().getRawQuery();
+        return query == null ? "" : parseForm(query).getOrDefault("q", "").trim();
+    }
+
     private static String normalizeFilter(String filter) {
         if (filter.equals("active") || filter.equals("completed")) {
             return filter;
@@ -394,8 +423,9 @@ public class App2 {
                 .replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
-    private static void redirect(HttpExchange exchange, String filter) throws IOException {
-        exchange.getResponseHeaders().set("Location", "/?filter=" + filter);
+    private static void redirect(HttpExchange exchange, String filter, String search) throws IOException {
+        exchange.getResponseHeaders().set("Location", "/?filter=" + filter + "&q="
+                + URLEncoder.encode(search, StandardCharsets.UTF_8));
         exchange.sendResponseHeaders(303, -1);
         exchange.close();
     }
