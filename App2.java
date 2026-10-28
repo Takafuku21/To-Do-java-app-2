@@ -3,24 +3,34 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class App2 {
     private static final List<Todo> todos = new ArrayList<>();
+    private static final Path DATA_FILE = Path.of("todos.tsv");
     private static int nextId = 1;
 
     public static void main(String[] args) throws IOException {
+        loadTodos();
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
         server.createContext("/", App2::handle);
         server.start();
         System.out.println("サーバー起動: http://localhost:8080 (終了するには Ctrl+C)");
+        System.out.println("Todoデータ保存先: " + DATA_FILE.toAbsolutePath().normalize());
     }
 
     private static void handle(HttpExchange exchange) throws IOException {
@@ -43,10 +53,19 @@ public class App2 {
             }
             if (!title.isEmpty()) {
                 synchronized (todos) {
-                    todos.add(new Todo(nextId++, title, dueDate));
+                    Todo todo = new Todo(nextId++, title, dueDate);
+                    todos.add(todo);
+                    try {
+                        saveTodos();
+                    } catch (IOException exception) {
+                        todos.remove(todo);
+                        nextId--;
+                        sendPersistenceError(exchange, exception);
+                        return;
+                    }
                 }
             }
-            redirect(exchange);
+            redirect(exchange, normalizeFilter(form.getOrDefault("filter", "all")));
             return;
         }
 
@@ -55,41 +74,146 @@ public class App2 {
             synchronized (todos) {
                 for (Todo todo : todos) {
                     if (todo.id == id) {
-                        todo.done = true;
+                        if (!todo.done) {
+                            todo.done = true;
+                            try {
+                                saveTodos();
+                            } catch (IOException exception) {
+                                todo.done = false;
+                                sendPersistenceError(exchange, exception);
+                                return;
+                            }
+                        }
                         break;
                     }
                 }
             }
-            redirect(exchange);
+            redirect(exchange, requestFilter(exchange));
             return;
         }
 
         if (path.equals("/delete") && method.equals("GET")) {
             int id = queryId(exchange);
             synchronized (todos) {
-                todos.removeIf(todo -> todo.id == id);
+                for (int i = 0; i < todos.size(); i++) {
+                    if (todos.get(i).id == id) {
+                        Todo removed = todos.remove(i);
+                        try {
+                            saveTodos();
+                        } catch (IOException exception) {
+                            todos.add(i, removed);
+                            sendPersistenceError(exchange, exception);
+                            return;
+                        }
+                        break;
+                    }
+                }
             }
-            redirect(exchange);
+            redirect(exchange, requestFilter(exchange));
             return;
         }
 
         if (path.equals("/") && method.equals("GET")) {
-            sendHtml(exchange, renderTodos());
+            sendHtml(exchange, renderTodos(requestFilter(exchange)));
         } else {
             send(exchange, 404, "text/plain; charset=UTF-8", "ページが見つかりません");
         }
     }
 
-    private static String renderTodos() {
+    private static void loadTodos() throws IOException {
+        if (!Files.exists(DATA_FILE)) {
+            return;
+        }
+
+        List<String> lines = Files.readAllLines(DATA_FILE, StandardCharsets.UTF_8);
+        if (lines.isEmpty() || !lines.get(0).equals("TODO_APP_DATA_V1")) {
+            throw new IOException("Todoデータファイルの形式が正しくありません: " + DATA_FILE);
+        }
+
+        List<Todo> loadedTodos = new ArrayList<>();
+        Set<Integer> ids = new HashSet<>();
+        int maxId = 0;
+        for (int i = 1; i < lines.size(); i++) {
+            String[] fields = lines.get(i).split("\t", -1);
+            if (fields.length != 4) {
+                throw new IOException("Todoデータファイルの" + (i + 1) + "行目が正しくありません");
+            }
+
+            try {
+                int id = Integer.parseInt(fields[0]);
+                if (id <= 0 || !ids.add(id) || !(fields[1].equals("true") || fields[1].equals("false"))) {
+                    throw new IllegalArgumentException("不正なIDまたは完了状態");
+                }
+                LocalDate dueDate = fields[2].isEmpty() ? null : LocalDate.parse(fields[2]);
+                String title = new String(Base64.getDecoder().decode(fields[3]), StandardCharsets.UTF_8);
+                if (title.isEmpty()) {
+                    throw new IllegalArgumentException("Todoの内容が空です");
+                }
+
+                Todo todo = new Todo(id, title, dueDate);
+                todo.done = Boolean.parseBoolean(fields[1]);
+                loadedTodos.add(todo);
+                maxId = Math.max(maxId, id);
+            } catch (IllegalArgumentException | DateTimeParseException exception) {
+                throw new IOException("Todoデータファイルの" + (i + 1) + "行目を読み込めません", exception);
+            }
+        }
+        if (maxId == Integer.MAX_VALUE) {
+            throw new IOException("Todo IDの上限に達しています");
+        }
+
+        synchronized (todos) {
+            todos.clear();
+            todos.addAll(loadedTodos);
+            nextId = maxId + 1;
+        }
+    }
+
+    private static void saveTodos() throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add("TODO_APP_DATA_V1");
+        for (Todo todo : todos) {
+            String dueDate = todo.dueDate == null ? "" : todo.dueDate.toString();
+            String title = Base64.getEncoder().encodeToString(todo.title.getBytes(StandardCharsets.UTF_8));
+            lines.add(todo.id + "\t" + todo.done + "\t" + dueDate + "\t" + title);
+        }
+
+        Path tempFile = DATA_FILE.resolveSibling(DATA_FILE.getFileName() + ".tmp");
+        try {
+            Files.write(tempFile, lines, StandardCharsets.UTF_8);
+            try {
+                Files.move(tempFile, DATA_FILE, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(tempFile, DATA_FILE, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tempFile);
+        }
+    }
+
+    private static void sendPersistenceError(HttpExchange exchange, IOException exception) throws IOException {
+        System.err.println("Todoデータの保存に失敗しました: " + exception.getMessage());
+        send(exchange, 500, "text/plain; charset=UTF-8", "Todoを保存できませんでした。データ保存先を確認してください。");
+    }
+
+    private static String renderTodos(String filter) {
         List<Todo> snapshot;
         synchronized (todos) {
             snapshot = new ArrayList<>(todos);
         }
 
         int remaining = 0;
+        List<Todo> visibleTodos = new ArrayList<>();
         for (Todo todo : snapshot) {
-            if (!todo.done)
+            if (!todo.done) {
                 remaining++;
+            }
+            if (filter.equals("all")
+                    || (filter.equals("active") && !todo.done)
+                    || (filter.equals("completed") && todo.done)) {
+                visibleTodos.add(todo);
+            }
         }
 
         StringBuilder html = new StringBuilder("<!DOCTYPE html><html lang='ja'><head><meta charset='UTF-8'>"
@@ -104,6 +228,7 @@ public class App2 {
                 + "form{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin-bottom:24px}input{min-width:0;flex:1 1 220px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:#f8fbfd;color:var(--ink);font:inherit;outline:none;transition:border-color .2s,box-shadow .2s}input::placeholder{color:#9aabba}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(71,125,165,.14)}.due-field{display:flex;flex:none;flex-direction:column;gap:3px;color:var(--muted);font-size:12px}.due-field input{flex:none;width:165px;height:54px;padding:13px 11px;font-size:13px}"
                 + "button{padding:12px 19px;border:0;border-radius:12px;background:var(--blue);color:white;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 5px 12px rgba(71,125,165,.2);transition:background .2s,transform .2s}button:hover{background:var(--blue-dark);transform:translateY(-1px)}"
                 + ".list-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}.count{color:var(--pine);font-weight:700}ul{margin:0;padding:0;list-style:none}li{display:flex;align-items:center;gap:12px;padding:15px 2px;border-bottom:1px solid #edf2f6}li:last-child{border-bottom:0}"
+                + ".filters{display:flex;gap:8px;margin:14px 0 4px}.filter{padding:6px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:13px}.filter.selected{border-color:var(--blue);background:#edf5fa;color:var(--blue-dark);font-weight:700}"
                 + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.todo-info{min-width:0;flex:1}.title{display:block;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}.deadline{display:block;color:var(--muted);font-size:12px}.deadline.today{color:#ad792e;font-weight:700}.deadline.overdue{color:#c45f58;font-weight:700}"
                 + "a{color:var(--blue);font-size:13px;text-decoration:none}a:hover{text-decoration:underline}.delete{color:#8a8290}.empty{padding:30px 8px;text-align:center;color:var(--muted)}.empty-mark{display:block;margin-bottom:8px;color:var(--blue);font-size:28px}"
                 + ".snowfall{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}.flake{position:absolute;top:-24px;left:var(--left);color:#fff;text-shadow:0 1px 5px rgba(87,130,157,.45);font-size:var(--size);opacity:.82;animation:fall var(--speed) linear var(--delay) infinite}@keyframes fall{to{transform:translate3d(38px,110vh,0) rotate(360deg)}}"
@@ -124,14 +249,25 @@ public class App2 {
                 + "<span class='flake' style='--left:79%;--size:13px;--speed:19s;--delay:-16s'>❄</span><span class='flake' style='--left:88%;--size:9px;--speed:14s;--delay:-9s'>❅</span>"
                 + "<span class='flake' style='--left:96%;--size:12px;--speed:16s;--delay:-4s'>❄</span></div><main class='wrap'><p class='eyebrow'>A quiet winter, a little progress</p>"
                 + "<h1>冬じたくの Todo</h1><p class='intro'>あたたかい飲みものと一緒に、今日やることをひとつずつ。</p><section class='card'>"
-                + "<form method='post' action='/add'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required>"
+                + "<form method='post' action='/add'><input type='hidden' name='filter' value='" + filter + "'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required>"
                 + "<label class='due-field'>期限<input type='date' name='dueDate' aria-label='期限'></label><button type='submit'>＋ 追加</button></form>"
-                + "<div class='list-head'><span>今日のリスト</span><span class='count'>あと " + remaining + " 件</span></div>");
-        if (snapshot.isEmpty()) {
-            html.append("<div class='empty'><span class='empty-mark'>✦</span>まずは、やることをひとつ書いてみましょう。</div>");
+                + "<div class='list-head'><span>今日のリスト</span><span class='count'>あと " + remaining + " 件</span></div>"
+                + "<nav class='filters' aria-label='Todoの表示'><a class='filter"
+                + (filter.equals("active") ? " selected" : "") + "' href='/?filter=active'"
+                + (filter.equals("active") ? " aria-current='page'" : "") + ">未完了だけ</a><a class='filter"
+                + (filter.equals("completed") ? " selected" : "") + "' href='/?filter=completed'"
+                + (filter.equals("completed") ? " aria-current='page'" : "") + ">完了だけ</a><a class='filter"
+                + (filter.equals("all") ? " selected" : "") + "' href='/?filter=all'"
+                + (filter.equals("all") ? " aria-current='page'" : "") + ">全部</a></nav>");
+        if (visibleTodos.isEmpty()) {
+            String emptyMessage = snapshot.isEmpty()
+                    ? "まずは、やることをひとつ書いてみましょう。"
+                    : "この条件にあてはまるTodoはありません。";
+            html.append("<div class='empty'><span class='empty-mark'>✦</span>")
+                    .append(emptyMessage).append("</div>");
         } else {
             html.append("<ul>");
-            for (Todo todo : snapshot) {
+            for (Todo todo : visibleTodos) {
                 String deadlineClass = "";
                 String deadlineLabel = "";
                 if (todo.dueDate != null) {
@@ -158,9 +294,11 @@ public class App2 {
                 }
                 html.append("</span>");
                 if (!todo.done) {
-                    html.append("<a href='/done?id=").append(todo.id).append("'>完了</a>");
+                    html.append("<a href='/done?id=").append(todo.id).append("&amp;filter=")
+                            .append(filter).append("'>完了</a>");
                 }
-                html.append("<a class='delete' href='/delete?id=").append(todo.id).append("'>削除</a></li>");
+                html.append("<a class='delete' href='/delete?id=").append(todo.id)
+                        .append("&amp;filter=").append(filter).append("'>削除</a></li>");
             }
             html.append("</ul>");
         }
@@ -198,13 +336,25 @@ public class App2 {
         return -1;
     }
 
+    private static String requestFilter(HttpExchange exchange) {
+        String query = exchange.getRequestURI().getRawQuery();
+        return normalizeFilter(query == null ? "all" : parseForm(query).getOrDefault("filter", "all"));
+    }
+
+    private static String normalizeFilter(String filter) {
+        if (filter.equals("active") || filter.equals("completed")) {
+            return filter;
+        }
+        return "all";
+    }
+
     private static String escapeHtml(String value) {
         return value.replace("&", "&amp;").replace("<", "&lt;")
                 .replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
-    private static void redirect(HttpExchange exchange) throws IOException {
-        exchange.getResponseHeaders().set("Location", "/");
+    private static void redirect(HttpExchange exchange, String filter) throws IOException {
+        exchange.getResponseHeaders().set("Location", "/?filter=" + filter);
         exchange.sendResponseHeaders(303, -1);
         exchange.close();
     }
