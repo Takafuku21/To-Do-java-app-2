@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -26,10 +29,21 @@ public class App2 {
 
         if (path.equals("/add") && method.equals("POST")) {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String title = parseForm(body).getOrDefault("todo", "").trim();
+            Map<String, String> form = parseForm(body);
+            String title = form.getOrDefault("todo", "").trim();
+            String dueDateValue = form.getOrDefault("dueDate", "").trim();
+            LocalDate dueDate = null;
+            if (!dueDateValue.isEmpty()) {
+                try {
+                    dueDate = LocalDate.parse(dueDateValue);
+                } catch (DateTimeParseException exception) {
+                    send(exchange, 400, "text/plain; charset=UTF-8", "期限の日付が正しくありません");
+                    return;
+                }
+            }
             if (!title.isEmpty()) {
                 synchronized (todos) {
-                    todos.add(new Todo(nextId++, title));
+                    todos.add(new Todo(nextId++, title, dueDate));
                 }
             }
             redirect(exchange);
@@ -87,10 +101,10 @@ public class App2 {
                 + ".wrap{position:relative;z-index:1;max-width:620px;margin:0 auto}.eyebrow{display:flex;align-items:center;gap:9px;margin:0 0 10px;color:var(--blue);font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase}.eyebrow:before{content:'❄';font-size:17px}"
                 + "h1{margin:0;font-family:Georgia,'Yu Mincho',serif;font-size:clamp(34px,7vw,48px);font-weight:500;letter-spacing:.04em}.intro{margin:10px 0 28px;color:var(--muted)}"
                 + ".card{padding:28px;background:var(--paper);border:1px solid rgba(255,255,255,.85);border-radius:22px;box-shadow:0 20px 55px rgba(49,87,116,.13);backdrop-filter:blur(8px)}"
-                + "form{display:flex;gap:10px;margin-bottom:24px}input{min-width:0;flex:1;padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:#f8fbfd;color:var(--ink);font:inherit;outline:none;transition:border-color .2s,box-shadow .2s}input::placeholder{color:#9aabba}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(71,125,165,.14)}"
+                + "form{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin-bottom:24px}input{min-width:0;flex:1 1 220px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:#f8fbfd;color:var(--ink);font:inherit;outline:none;transition:border-color .2s,box-shadow .2s}input::placeholder{color:#9aabba}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(71,125,165,.14)}.due-field{display:flex;flex:none;flex-direction:column;gap:3px;color:var(--muted);font-size:12px}.due-field input{flex:none;width:165px;height:54px;padding:13px 11px;font-size:13px}"
                 + "button{padding:12px 19px;border:0;border-radius:12px;background:var(--blue);color:white;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 5px 12px rgba(71,125,165,.2);transition:background .2s,transform .2s}button:hover{background:var(--blue-dark);transform:translateY(-1px)}"
                 + ".list-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}.count{color:var(--pine);font-weight:700}ul{margin:0;padding:0;list-style:none}li{display:flex;align-items:center;gap:12px;padding:15px 2px;border-bottom:1px solid #edf2f6}li:last-child{border-bottom:0}"
-                + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.title{flex:1;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}"
+                + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.todo-info{min-width:0;flex:1}.title{display:block;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}.deadline{display:block;color:var(--muted);font-size:12px}.deadline.today{color:#ad792e;font-weight:700}.deadline.overdue{color:#c45f58;font-weight:700}"
                 + "a{color:var(--blue);font-size:13px;text-decoration:none}a:hover{text-decoration:underline}.delete{color:#8a8290}.empty{padding:30px 8px;text-align:center;color:var(--muted)}.empty-mark{display:block;margin-bottom:8px;color:var(--blue);font-size:28px}"
                 + ".snowfall{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}.flake{position:absolute;top:-24px;left:var(--left);color:#fff;text-shadow:0 1px 5px rgba(87,130,157,.45);font-size:var(--size);opacity:.82;animation:fall var(--speed) linear var(--delay) infinite}@keyframes fall{to{transform:translate3d(38px,110vh,0) rotate(360deg)}}"
                 + ".snow-scene{position:relative;height:112px;margin-top:8px;overflow:hidden}.snowman-track{position:absolute;inset:0 auto 0 0;width:78px;animation:walk 12s ease-in-out infinite alternate}@keyframes walk{to{transform:translateX(calc(min(620px,100vw - 40px) - 78px))}}"
@@ -110,16 +124,39 @@ public class App2 {
                 + "<span class='flake' style='--left:79%;--size:13px;--speed:19s;--delay:-16s'>❄</span><span class='flake' style='--left:88%;--size:9px;--speed:14s;--delay:-9s'>❅</span>"
                 + "<span class='flake' style='--left:96%;--size:12px;--speed:16s;--delay:-4s'>❄</span></div><main class='wrap'><p class='eyebrow'>A quiet winter, a little progress</p>"
                 + "<h1>冬じたくの Todo</h1><p class='intro'>あたたかい飲みものと一緒に、今日やることをひとつずつ。</p><section class='card'>"
-                + "<form method='post' action='/add'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required><button type='submit'>＋ 追加</button></form>"
+                + "<form method='post' action='/add'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required>"
+                + "<label class='due-field'>期限<input type='date' name='dueDate' aria-label='期限'></label><button type='submit'>＋ 追加</button></form>"
                 + "<div class='list-head'><span>今日のリスト</span><span class='count'>あと " + remaining + " 件</span></div>");
         if (snapshot.isEmpty()) {
             html.append("<div class='empty'><span class='empty-mark'>✦</span>まずは、やることをひとつ書いてみましょう。</div>");
         } else {
             html.append("<ul>");
             for (Todo todo : snapshot) {
+                String deadlineClass = "";
+                String deadlineLabel = "";
+                if (todo.dueDate != null) {
+                    LocalDate today = LocalDate.now();
+                    if (!todo.done && todo.dueDate.isBefore(today)) {
+                        deadlineClass = " overdue";
+                        deadlineLabel = "期限切れ";
+                    } else if (!todo.done && todo.dueDate.equals(today)) {
+                        deadlineClass = " today";
+                        deadlineLabel = "今日まで";
+                    } else {
+                        deadlineLabel = "期限";
+                    }
+                }
                 html.append("<li class='").append(todo.done ? "done" : "")
                         .append("'><span class='mark'>").append(todo.done ? "✓" : "")
-                        .append("</span><span class='title'>").append(escapeHtml(todo.title)).append("</span>");
+                        .append("</span><span class='todo-info'><span class='title'>")
+                        .append(escapeHtml(todo.title)).append("</span>");
+                if (todo.dueDate != null) {
+                    html.append("<span class='deadline").append(deadlineClass).append("'>")
+                            .append(deadlineLabel).append(": ")
+                            .append(todo.dueDate.format(DateTimeFormatter.ofPattern("yyyy年M月d日")))
+                            .append("</span>");
+                }
+                html.append("</span>");
                 if (!todo.done) {
                     html.append("<a href='/done?id=").append(todo.id).append("'>完了</a>");
                 }
@@ -188,11 +225,13 @@ public class App2 {
     private static class Todo {
         final int id;
         final String title;
+        final LocalDate dueDate;
         boolean done;
 
-        Todo(int id, String title) {
+        Todo(int id, String title, LocalDate dueDate) {
             this.id = id;
             this.title = title;
+            this.dueDate = dueDate;
         }
     }
 }
