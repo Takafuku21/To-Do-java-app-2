@@ -113,6 +113,19 @@ public class App2 {
             return;
         }
 
+        if (path.equals("/clear-completed") && method.equals("POST")) {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String filter = normalizeFilter(parseForm(body).getOrDefault("filter", "all"));
+            try {
+                clearCompletedTodos();
+            } catch (IOException exception) {
+                sendPersistenceError(exchange, exception);
+                return;
+            }
+            redirect(exchange, filter);
+            return;
+        }
+
         if (path.equals("/") && method.equals("GET")) {
             sendHtml(exchange, renderTodos(requestFilter(exchange)));
         } else {
@@ -192,6 +205,24 @@ public class App2 {
         }
     }
 
+    private static void clearCompletedTodos() throws IOException {
+        synchronized (todos) {
+            List<Todo> previousTodos = new ArrayList<>(todos);
+            boolean removed = todos.removeIf(todo -> todo.done);
+            if (!removed) {
+                return;
+            }
+
+            try {
+                saveTodos();
+            } catch (IOException exception) {
+                todos.clear();
+                todos.addAll(previousTodos);
+                throw exception;
+            }
+        }
+    }
+
     private static void sendPersistenceError(HttpExchange exchange, IOException exception) throws IOException {
         System.err.println("Todoデータの保存に失敗しました: " + exception.getMessage());
         send(exchange, 500, "text/plain; charset=UTF-8", "Todoを保存できませんでした。データ保存先を確認してください。");
@@ -204,10 +235,13 @@ public class App2 {
         }
 
         int remaining = 0;
+        int completedCount = 0;
         List<Todo> visibleTodos = new ArrayList<>();
         for (Todo todo : snapshot) {
             if (!todo.done) {
                 remaining++;
+            } else {
+                completedCount++;
             }
             if (filter.equals("all")
                     || (filter.equals("active") && !todo.done)
@@ -227,6 +261,7 @@ public class App2 {
                 + ".card{padding:28px;background:var(--paper);border:1px solid rgba(255,255,255,.85);border-radius:22px;box-shadow:0 20px 55px rgba(49,87,116,.13);backdrop-filter:blur(8px)}"
                 + "form{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin-bottom:24px}input{min-width:0;flex:1 1 220px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:#f8fbfd;color:var(--ink);font:inherit;outline:none;transition:border-color .2s,box-shadow .2s}input::placeholder{color:#9aabba}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(71,125,165,.14)}.due-field{display:flex;flex:none;flex-direction:column;gap:3px;color:var(--muted);font-size:12px}.due-field input{flex:none;width:165px;height:54px;padding:13px 11px;font-size:13px}"
                 + "button{padding:12px 19px;border:0;border-radius:12px;background:var(--blue);color:white;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 5px 12px rgba(71,125,165,.2);transition:background .2s,transform .2s}button:hover{background:var(--blue-dark);transform:translateY(-1px)}"
+                + ".clear-completed-form{display:flex;justify-content:flex-end;margin:8px 0 0}.clear-completed-button{padding:7px 12px;border:1px solid var(--line);background:transparent;color:#8a8290;font-size:12px;box-shadow:none}.clear-completed-button:hover{background:#f7eeee;color:#a55353}"
                 + ".list-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}.count{color:var(--pine);font-weight:700}ul{margin:0;padding:0;list-style:none}li{display:flex;align-items:center;gap:12px;padding:15px 2px;border-bottom:1px solid #edf2f6}li:last-child{border-bottom:0}"
                 + ".filters{display:flex;gap:8px;margin:14px 0 4px}.filter{padding:6px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:13px}.filter.selected{border-color:var(--blue);background:#edf5fa;color:var(--blue-dark);font-weight:700}"
                 + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.todo-info{min-width:0;flex:1}.title{display:block;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}.deadline{display:block;color:var(--muted);font-size:12px}.deadline.today{color:#ad792e;font-weight:700}.deadline.overdue{color:#c45f58;font-weight:700}"
@@ -259,6 +294,12 @@ public class App2 {
                 + (filter.equals("completed") ? " aria-current='page'" : "") + ">完了だけ</a><a class='filter"
                 + (filter.equals("all") ? " selected" : "") + "' href='/?filter=all'"
                 + (filter.equals("all") ? " aria-current='page'" : "") + ">全部</a></nav>");
+        if (completedCount > 0) {
+            html.append("<form class='clear-completed-form' method='post' action='/clear-completed' "
+                    + "onsubmit=\"return confirm('完了済みのTodoをすべて削除しますか？')\">")
+                    .append("<input type='hidden' name='filter' value='").append(filter)
+                    .append("'><button class='clear-completed-button' type='submit'>完了済みを一括削除</button></form>");
+        }
         if (visibleTodos.isEmpty()) {
             String emptyMessage = snapshot.isEmpty()
                     ? "まずは、やることをひとつ書いてみましょう。"
