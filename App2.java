@@ -92,8 +92,23 @@ public class App2 {
                 + ".list-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}.count{color:var(--pine);font-weight:700}ul{margin:0;padding:0;list-style:none}li{display:flex;align-items:center;gap:12px;padding:15px 2px;border-bottom:1px solid #edf2f6}li:last-child{border-bottom:0}"
                 + ".mark{display:grid;width:22px;height:22px;flex:none;place-items:center;border:1.5px solid #b8cbd8;border-radius:50%;color:white;font-size:13px}.done .mark{border-color:var(--pine);background:var(--pine)}.title{flex:1;overflow-wrap:anywhere}.done .title{color:#9aabb8;text-decoration:line-through}"
                 + "a{color:var(--blue);font-size:13px;text-decoration:none}a:hover{text-decoration:underline}.delete{color:#8a8290}.empty{padding:30px 8px;text-align:center;color:var(--muted)}.empty-mark{display:block;margin-bottom:8px;color:var(--blue);font-size:28px}"
-                + "footer{margin-top:18px;color:#8296a7;text-align:center;font-size:12px}@media(max-width:480px){body{padding:32px 14px}.card{padding:20px}form{gap:8px}button{padding:11px 14px}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}}"
-                + "</style></head><body><main class='wrap'><p class='eyebrow'>A quiet winter, a little progress</p>"
+                + ".snowfall{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}.flake{position:absolute;top:-24px;left:var(--left);color:#fff;text-shadow:0 1px 5px rgba(87,130,157,.45);font-size:var(--size);opacity:.82;animation:fall var(--speed) linear var(--delay) infinite}@keyframes fall{to{transform:translate3d(38px,110vh,0) rotate(360deg)}}"
+                + ".snow-scene{position:relative;height:112px;margin-top:8px;overflow:hidden}.snowman-track{position:absolute;inset:0 auto 0 0;width:78px;animation:walk 12s ease-in-out infinite alternate}@keyframes walk{to{transform:translateX(calc(min(620px,100vw - 40px) - 78px))}}"
+                + ".snowman{position:absolute;bottom:0;left:0;width:78px;height:104px;animation:bob 1.1s ease-in-out infinite alternate;transform-origin:bottom center}@keyframes bob{to{transform:translateY(-4px) rotate(3deg)}}"
+                + ".snow-body{position:absolute;bottom:0;left:10px;width:58px;height:58px;border:1px solid #d5e5ee;border-radius:50%;background:radial-gradient(circle at 35% 26%,#fff 0 14%,#f5fbff 55%,#dcebf3 100%);box-shadow:inset -5px -5px 0 rgba(155,190,209,.14)}"
+                + ".snow-head{position:absolute;bottom:47px;left:17px;width:44px;height:44px;border:1px solid #d5e5ee;border-radius:50%;background:radial-gradient(circle at 34% 43%,#344b5d 0 2px,transparent 2.5px),radial-gradient(circle at 67% 43%,#344b5d 0 2px,transparent 2.5px),radial-gradient(circle at 36% 52%,#efaaa0 0 2px,transparent 2.5px),radial-gradient(circle at 65% 52%,#efaaa0 0 2px,transparent 2.5px),linear-gradient(145deg,#fff,#eaf5fa);box-shadow:inset -4px -4px 0 rgba(155,190,209,.12)}"
+                + ".snow-head:after{position:absolute;top:19px;left:27px;width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:10px solid #e8a45e;content:''}"
+                + ".snow-scarf{position:absolute;z-index:2;bottom:47px;left:16px;width:47px;height:9px;border-radius:5px;background:#d66b63;transform:rotate(-5deg)}.snow-scarf:after{position:absolute;top:5px;right:5px;width:8px;height:17px;border-radius:0 0 5px 5px;background:#d66b63;content:''}"
+                + ".snow-hat{position:absolute;z-index:2;bottom:87px;left:20px;width:38px;height:7px;border-radius:4px;background:#477da5}.snow-hat:before{position:absolute;bottom:5px;left:7px;width:24px;height:17px;border-radius:8px 8px 2px 2px;background:#477da5;content:''}.snow-hat:after{position:absolute;z-index:1;top:-7px;left:15px;width:8px;height:8px;border-radius:50%;background:#d66b63;content:''}"
+                + ".snow-arm{position:absolute;z-index:-1;bottom:35px;width:24px;height:3px;border-radius:3px;background:#9b7659;transform-origin:right center}.snow-arm.left{left:-8px;transform:rotate(-25deg)}.snow-arm.right{right:-8px;transform-origin:left center;transform:rotate(25deg)}"
+                + "footer{margin-top:2px;color:#8296a7;text-align:center;font-size:12px}@media(max-width:480px){body{padding:32px 14px}.card{padding:20px}form{gap:8px}button{padding:11px 14px}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}.snowfall{display:none}.snowman-track,.snowman{animation:none!important}}"
+                + "</style></head><body><div class='snowfall' aria-hidden='true'>"
+                + "<span class='flake' style='--left:7%;--size:13px;--speed:12s;--delay:-3s'>❄</span><span class='flake' style='--left:16%;--size:9px;--speed:16s;--delay:-11s'>❅</span>"
+                + "<span class='flake' style='--left:25%;--size:15px;--speed:14s;--delay:-6s'>❄</span><span class='flake' style='--left:34%;--size:10px;--speed:18s;--delay:-14s'>❅</span>"
+                + "<span class='flake' style='--left:43%;--size:12px;--speed:13s;--delay:-8s'>❄</span><span class='flake' style='--left:52%;--size:8px;--speed:17s;--delay:-2s'>❅</span>"
+                + "<span class='flake' style='--left:61%;--size:14px;--speed:15s;--delay:-12s'>❄</span><span class='flake' style='--left:70%;--size:10px;--speed:12s;--delay:-5s'>❅</span>"
+                + "<span class='flake' style='--left:79%;--size:13px;--speed:19s;--delay:-16s'>❄</span><span class='flake' style='--left:88%;--size:9px;--speed:14s;--delay:-9s'>❅</span>"
+                + "<span class='flake' style='--left:96%;--size:12px;--speed:16s;--delay:-4s'>❄</span></div><main class='wrap'><p class='eyebrow'>A quiet winter, a little progress</p>"
                 + "<h1>冬じたくの Todo</h1><p class='intro'>あたたかい飲みものと一緒に、今日やることをひとつずつ。</p><section class='card'>"
                 + "<form method='post' action='/add'><input name='todo' placeholder='今日やることを追加…' aria-label='Todo' required><button type='submit'>＋ 追加</button></form>"
                 + "<div class='list-head'><span>今日のリスト</span><span class='count'>あと " + remaining + " 件</span></div>");
@@ -112,7 +127,10 @@ public class App2 {
             }
             html.append("</ul>");
         }
-        html.append("</section><footer>❄ ゆっくりでも、ひとつずつ。 ❄</footer></main></body></html>");
+        html.append("</section><div class='snow-scene' aria-hidden='true'><div class='snowman-track'><div class='snowman'>"
+                + "<span class='snow-arm left'></span><span class='snow-arm right'></span><span class='snow-body'></span>"
+                + "<span class='snow-head'></span><span class='snow-scarf'></span><span class='snow-hat'></span>"
+                + "</div></div></div><footer>❄ ゆっくりでも、ひとつずつ。 ❄</footer></main></body></html>");
         return html.toString();
     }
 
